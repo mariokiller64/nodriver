@@ -551,7 +551,7 @@ class Browser:
                 else:
                     del self._i
 
-    def stop(self):
+    async def stop(self):
         try:
             # asyncio.get_running_loop().create_task(self.connection.send(cdp.browser.close()))
 
@@ -604,7 +604,8 @@ class Browser:
                         raise
             self._process = None
             self._process_pid = None
-
+        await self._process.wait()
+        
     def __await__(self):
         # return ( asyncio.sleep(0)).__await__()
         return self.update_targets().__await__()

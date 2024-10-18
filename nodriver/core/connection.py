@@ -493,10 +493,10 @@ class Connection(metaclass=CantTouchThis):
             self.enabled_domains.remove(ed)
 
     async def _prepare_headless(self):
-
         if getattr(self, "_prep_headless_done", None):
             return
-        response, error = await self._send_oneshot(
+        
+        _response = await self._send_oneshot(
             cdp.runtime.evaluate(
                 expression="navigator.userAgent",
                 user_gesture=True,
@@ -505,13 +505,63 @@ class Connection(metaclass=CantTouchThis):
                 allow_unsafe_eval_blocked_by_csp=True,
             )
         )
+        
+        if not _response: 
+            return
+        
+        response, error = _response
         if response and response.value:
             ua = response.value
+            # Remove headless indicators
+            ua = ua.replace("Headless", "").replace("headless", "")
+            
             await self._send_oneshot(
                 cdp.network.set_user_agent_override(
-                    user_agent=ua.replace("Headless", ""),
+                    user_agent=ua,
                 )
             )
+
+        # Apply scripts to mask headless and automated behavior
+        await self._send_oneshot(
+            cdp.page.add_script_to_evaluate_on_new_document(
+                """
+                // Override navigator.webdriver
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+
+                // Modify window.chrome
+                window.chrome = {
+                    runtime: {}
+                };
+
+                // Override permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({state: Notification.permission}) :
+                        originalQuery(parameters)
+                );
+
+                // Randomize finger printable properties
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => Math.floor(Math.random() * 8) + 2
+                });
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => Math.floor(Math.random() * 32) + 1
+                });
+
+                // Add language and platform diversity
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => ['Win32', 'MacIntel', 'Linux x86_64'][Math.floor(Math.random() * 3)]
+                });
+                Object.defineProperty(navigator, 'language', {
+                    get: () => ['en-US', 'en-GB', 'fr-FR', 'de-DE', 'es-ES'][Math.floor(Math.random() * 5)]
+                });
+                """
+            )
+        )
+
         setattr(self, "_prep_headless_done", True)
 
     async def _prepare_expert(self):
@@ -647,6 +697,8 @@ class Listener:
                 # probably an event
                 try:
                     event = cdp.util.parse_json_event(message)
+                    if not event:
+                        continue
                     event_tx = EventTransaction(event)
                     if not self.connection.mapper:
                         self.connection.__count__ = itertools.count(0)

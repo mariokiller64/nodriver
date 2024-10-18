@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import pathlib
+import random
 import secrets
 import typing
 
@@ -709,6 +710,111 @@ class Element:
             for char in list(text)
         ]
 
+    qwertyKeyboardArray = [
+        ['`','1','2','3','4','5','6','7','8','9','0','-','='],
+        ['q','w','e','r','t','y','u','i','o','p','[',']','\\'],
+        ['a','s','d','f','g','h','j','k','l',';','\'', '\n'],
+        ['z','x','c','v','b','n','m',',','.','/'],
+        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
+    ]
+
+    qwertyShiftedKeyboardArray = [
+        ['~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+'],
+        ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '|'],
+        ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"'],
+        ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?'],
+        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
+    ]
+
+    @staticmethod
+    def get_char_position(char):
+        for i, row in enumerate(Element.qwertyKeyboardArray):
+            if char.lower() in row:
+                return i, row.index(char.lower())
+        return None
+
+    @staticmethod
+    def get_nearby_chars(char):
+        pos = Element.get_char_position(char)
+        if pos is None:
+            return [char]
+
+        i, j = pos
+        nearby = []
+        for di in [-1, 0, 1]:
+            for dj in [-1, 0, 1]:
+                if di == 0 and dj == 0:
+                    continue
+                new_i, new_j = i + di, j + dj
+                if 0 <= new_i < len(Element.qwertyKeyboardArray) and \
+                   0 <= new_j < len(Element.qwertyKeyboardArray[new_i]):
+                    nearby.append(Element.qwertyKeyboardArray[new_i][new_j])
+        return nearby
+
+    async def send_keys_humanistic(self, text: str, accuracy=0.9, correction_chance=0.9, typing_delay=(0.2, 0.7)):
+        """
+        Send text to an input field with humanistic typing behavior.
+
+        🚨 If you need your text sent perfectly increase your
+        `correction_chance` to `1.0`.
+
+        :param text: text to send
+        :param accuracy: typing accuracy (default 0.9)
+        :param correction_chance: chance to correct a typo (default 0.9)
+        :param typing_delay: tuple of (min, max) delay between keystrokes (default 0.1, 0.3)
+        """
+        await self.apply("(elem) => elem.focus()")
+
+        def get_delay():
+            # Increased delay for more human-like typing
+            return random.uniform(typing_delay[0], typing_delay[1])
+
+        def get_wrong_char(char):
+            nearby = self.get_nearby_chars(char)
+            return random.choice(nearby) if nearby else char
+
+        async def send_backspace():
+            await self._tab.send(cdp.input_.dispatch_key_event(
+                "keyDown",
+                windows_virtual_key_code=8,
+                code="Backspace",
+                key="Backspace"
+            ))
+            await self._tab.send(cdp.input_.dispatch_key_event(
+                "keyUp",
+                windows_virtual_key_code=8,
+                code="Backspace",
+                key="Backspace"
+            ))
+
+        true_text = ""
+        for char in text:
+            if random.random() > accuracy:
+                # Make a typo
+                wrong_char = get_wrong_char(char)
+                await self.send_keys(wrong_char)
+                true_text += char
+                await asyncio.sleep(get_delay())  # Added delay after typing a wrong character
+
+                if random.random() < correction_chance:
+                    # Correct the typo
+                    await send_backspace()
+                    await asyncio.sleep(get_delay())  # Added delay before correcting the typo
+                    await self.send_keys(char)
+                    true_text = ""
+            else:
+                # Type correctly
+                await self.send_keys(char)
+
+            await asyncio.sleep(get_delay())  # Delay between each keystroke
+
+        # Type any remaining correct text
+        if true_text:
+            for char in true_text:
+                await self.send_keys(char)
+                await asyncio.sleep(get_delay())
+
+                
     async def send_file(self, *file_paths: PathLike):
         """
         some form input require a file (upload), a full path needs to be provided.

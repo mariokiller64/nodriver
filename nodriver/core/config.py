@@ -111,7 +111,6 @@ class Config:
         self.__dict__.update(kwargs)
         super().__init__()
         self._default_browser_args = [
-            "--remote-allow-origins=*",
             "--no-first-run",
             "--no-service-autorun",
             "--no-default-browser-check",
