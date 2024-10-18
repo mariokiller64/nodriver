@@ -453,7 +453,50 @@ class Tab(Connection):
         if not node:
             return
         return element.create(node, self, doc)
+    
+    async def find_elements_by_xpath(
+        self,
+        xpath: str,
+    ) -> List[element.Element]:
+        """
+        returns element which match the given xpath.
+        please note: this may (or will) also return any other element (like inline scripts),
+        which happen to contain that text.
+        :param text:
+        :type text:
+        :return:
+        :rtype:
+        """
+        doc = await self.send(cdp.dom.get_document(-1, True))
+        search_id, nresult = await self.send(cdp.dom.perform_search(xpath, True))
+        if nresult:
+            node_ids = await self.send(
+                cdp.dom.get_search_results(search_id, 0, nresult)
+            )
+        else:
+            node_ids = []
 
+        await self.send(cdp.dom.discard_search_results(search_id))
+
+        items = []
+        for nid in node_ids:
+            node = util.filter_recurse(doc, lambda n: n.node_id == nid)
+            if not node:
+                node = await self.send(cdp.dom.resolve_node(node_id=nid))
+                if not node:
+                    continue
+                # remote_object = await self.send(cdp.dom.resolve_node(backend_node_id=node.backend_node_id))
+                # node_id = await self.send(cdp.dom.request_node(object_id=remote_object.object_id))
+            try:
+                elem = element.create(node, self, doc)
+            except:  # noqa
+                continue
+
+            # just add the element itself
+            items.append(elem)
+
+        return items
+    
     async def find_elements_by_text(
         self,
         text: str,
@@ -867,7 +910,13 @@ class Tab(Connection):
                 return remote_object.value
         else:
             return remote_object, exception_details
-
+        
+    def on(self, event: str, callback: callable):
+        if event == "close":
+            self.close_callback = callback
+        else:
+            raise ValueError("Unsupported event")
+        
     async def close(self):
         """
         close the current target (ie: tab,window,page)
@@ -876,6 +925,8 @@ class Tab(Connection):
         """
         if self.target and self.target.target_id:
             await self.send(cdp.target.close_target(target_id=self.target.target_id))
+        if hasattr(self, "close_callback"):
+            self.close_callback()
 
     async def get_window(self) -> Tuple[cdp.browser.WindowID, cdp.browser.Bounds]:
         """

@@ -344,7 +344,7 @@ class Browser:
             except (Exception,):
                 if _ == 4:
                     logger.debug("could not start", exc_info=True)
-                await self.sleep(0.5)
+                await self.sleep(1)
             else:
                 break
 
