@@ -583,7 +583,30 @@ class Element:
         await self._tab.send(
             cdp.input_.dispatch_mouse_event("mouseReleased", x=center[0], y=center[1])
         )
+        
+    async def mouse_move_random(self, tab):
+        """moves mouse (not click), to element position. when an element has an
+        hover/mouseover effect, this would trigger it
+        random location between the element's (left,top) and (right,bottom)"""
+        self._remote_object = await self._tab.send(cdp.dom.resolve_node(backend_node_id=self.backend_node_id))
+        quads = await self.tab.send(cdp.dom.get_content_quads(object_id=self.remote_object.object_id))
+        left = quads[0][0]
+        top = quads[0][1]
+        right = quads[0][2]
+        bottom = quads[0][5]
+        
+        # Generate random x and y positions within the element's bounds
+        x = random.uniform(left, right)
+        y = random.uniform(top, bottom)
 
+        # Move the mouse to the random position
+        await self._tab.send(cdp.input_.dispatch_mouse_event("mouseMoved", x=x, y=y))
+        await tab.sleep(random.uniform(0.15, 0.35))
+        
+        # Release the mouse at the random position
+        await self._tab.send(cdp.input_.dispatch_mouse_event("mouseReleased", x=x, y=y))
+        await tab.sleep(random.uniform(0.15, 0.5))
+        
     async def mouse_drag(
         self,
         destination: typing.Union[Element, typing.Tuple[int, int]],
@@ -750,7 +773,21 @@ class Element:
                    0 <= new_j < len(Element.qwertyKeyboardArray[new_i]):
                     nearby.append(Element.qwertyKeyboardArray[new_i][new_j])
         return nearby
-
+    
+    async def send_keys_random(self, text: str, tab):
+        """
+        Send text to an input field, or any other HTML element with a random delay between each key.
+        
+        :param text: text to send
+        :return: None
+        """
+        await self.apply("(elem) => elem.focus()")
+        
+        # Send each character of the text with a random delay between keystrokes
+        for char in list(text):
+            await self._tab.send(cdp.input_.dispatch_key_event("char", text=char))
+            await tab.sleep(random.random())  # Random delay between each keystroke
+            
     async def send_keys_humanistic(self, text: str, accuracy=0.9, correction_chance=0.9, typing_delay=(0.2, 0.7)):
         """
         Send text to an input field with humanistic typing behavior.

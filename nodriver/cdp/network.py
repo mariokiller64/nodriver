@@ -1490,11 +1490,17 @@ class CookiePartitionKey:
         return json
 
     @classmethod
-    def from_json(cls, json: T_JSON_DICT) -> CookiePartitionKey:
-        return cls(
-            top_level_site=str(json["topLevelSite"]),
-            has_cross_site_ancestor=bool(json["hasCrossSiteAncestor"]),
-        )
+    def from_json(cls, json_input) -> CookiePartitionKey:
+        if isinstance(json_input, str):
+            return cls(
+                top_level_site=json_input,
+                has_cross_site_ancestor=False
+            )
+        elif isinstance(json_input, dict):
+            return cls(
+                top_level_site=str(json_input["topLevelSite"]),
+                has_cross_site_ancestor=bool(json_input["hasCrossSiteAncestor"])
+            )
 
 
 @dataclass
