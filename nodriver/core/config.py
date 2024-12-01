@@ -4,10 +4,10 @@ import pathlib
 import secrets
 import sys
 import tempfile
-from typing import Union, List, Optional
-from types import MethodType
 import zipfile
-import tempfile
+from types import MethodType
+from typing import List, Optional, Union
+
 from ._contradict import ContraDict
 
 __all__ = [
@@ -111,6 +111,7 @@ class Config:
         self.__dict__.update(kwargs)
         super().__init__()
         self._default_browser_args = [
+            "--remote-allow-origins=*",
             "--no-first-run",
             "--no-service-autorun",
             "--no-default-browser-check",
@@ -243,7 +244,8 @@ def is_root():
     :return:
     :rtype:
     """
-    import ctypes, os
+    import ctypes
+    import os
 
     try:
         return os.getuid() == 0
@@ -302,13 +304,22 @@ def find_chrome_executable(return_all=False):
                 % candidate
             )
 
-    if not rv:
-        raise FileNotFoundError(
-            "could not find a valid chrome browser binary. please make sure chrome is installed."
-            "or use the keyword argument 'browser_executable_path=/path/to/your/browser' "
-        )
+    winner = None
 
-    if return_all:
+    if return_all and rv:
         return rv
 
-    return os.path.normpath(rv[0])
+    if rv and len(rv) > 1:
+        # assuming the shortest path wins
+        winner = min(rv, key=lambda x: len(x))
+
+    elif len(rv) == 1:
+        winner = rv[0]
+
+    if winner:
+        return os.path.normpath(winner)
+
+    raise FileNotFoundError(
+        "could not find a valid chrome browser binary. please make sure chrome is installed."
+        "or use the keyword argument 'browser_executable_path=/path/to/your/browser' "
+    )

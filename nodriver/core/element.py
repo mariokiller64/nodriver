@@ -4,14 +4,13 @@ import asyncio
 import json
 import logging
 import pathlib
-import random
 import secrets
 import typing
 
+from .. import cdp
 from . import util
 from ._contradict import ContraDict
 from .config import PathLike
-from .. import cdp
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +190,13 @@ class Element:
     def tab(self):
         return self._tab
 
+    @property
+    def shadow_children(self):
+        if self.shadow_roots:
+            root = self.shadow_roots[0]
+            if root.shadow_root_type == cdp.dom.ShadowRootType.OPEN_:
+                return [create(child, self.tab) for child in root.children]
+
     def __getattr__(self, item):
         # if attribute is not found on the element python object
         # check if it may be present in the element attributes (eg, href=, src=, alt=)
@@ -199,10 +205,8 @@ class Element:
         x = getattr(self.attrs, item, None)
         if x:
             return x
-
-    #     x = getattr(self.node, item, None)
-    #
-    #     return x
+        else:
+            logger.debug("could not find attribute '%s' in %s" % (item, self.attrs))
 
     def __setattr__(self, key, value):
         if key[0] != "_":
@@ -274,13 +278,10 @@ class Element:
         """
         if _node:
             doc = _node
-            # self._node = _node
-            # self._children.clear()
             self._parent = None
         else:
             doc = await self._tab.send(cdp.dom.get_document(-1, True))
             self._parent = None
-        # if self.node_name != "IFRAME":
         updated_node = util.filter_recurse(
             doc, lambda n: n.backend_node_id == self._node.backend_node_id
         )
@@ -583,30 +584,7 @@ class Element:
         await self._tab.send(
             cdp.input_.dispatch_mouse_event("mouseReleased", x=center[0], y=center[1])
         )
-        
-    async def mouse_move_random(self, tab):
-        """moves mouse (not click), to element position. when an element has an
-        hover/mouseover effect, this would trigger it
-        random location between the element's (left,top) and (right,bottom)"""
-        self._remote_object = await self._tab.send(cdp.dom.resolve_node(backend_node_id=self.backend_node_id))
-        quads = await self.tab.send(cdp.dom.get_content_quads(object_id=self.remote_object.object_id))
-        left = quads[0][0]
-        top = quads[0][1]
-        right = quads[0][2]
-        bottom = quads[0][5]
-        
-        # Generate random x and y positions within the element's bounds
-        x = random.uniform(left, right)
-        y = random.uniform(top, bottom)
 
-        # Move the mouse to the random position
-        await self._tab.send(cdp.input_.dispatch_mouse_event("mouseMoved", x=x, y=y))
-        await tab.sleep(random.uniform(0.15, 0.35))
-        
-        # Release the mouse at the random position
-        await self._tab.send(cdp.input_.dispatch_mouse_event("mouseReleased", x=x, y=y))
-        await tab.sleep(random.uniform(0.15, 0.5))
-        
     async def mouse_drag(
         self,
         destination: typing.Union[Element, typing.Tuple[int, int]],
@@ -733,125 +711,6 @@ class Element:
             for char in list(text)
         ]
 
-    qwertyKeyboardArray = [
-        ['`','1','2','3','4','5','6','7','8','9','0','-','='],
-        ['q','w','e','r','t','y','u','i','o','p','[',']','\\'],
-        ['a','s','d','f','g','h','j','k','l',';','\'', '\n'],
-        ['z','x','c','v','b','n','m',',','.','/'],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
-
-    qwertyShiftedKeyboardArray = [
-        ['~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+'],
-        ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '|'],
-        ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"'],
-        ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?'],
-        [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ']
-    ]
-
-    @staticmethod
-    def get_char_position(char):
-        for i, row in enumerate(Element.qwertyKeyboardArray):
-            if char.lower() in row:
-                return i, row.index(char.lower())
-        return None
-
-    @staticmethod
-    def get_nearby_chars(char):
-        pos = Element.get_char_position(char)
-        if pos is None:
-            return [char]
-
-        i, j = pos
-        nearby = []
-        for di in [-1, 0, 1]:
-            for dj in [-1, 0, 1]:
-                if di == 0 and dj == 0:
-                    continue
-                new_i, new_j = i + di, j + dj
-                if 0 <= new_i < len(Element.qwertyKeyboardArray) and \
-                   0 <= new_j < len(Element.qwertyKeyboardArray[new_i]):
-                    nearby.append(Element.qwertyKeyboardArray[new_i][new_j])
-        return nearby
-    
-    async def send_keys_random(self, text: str, tab):
-        """
-        Send text to an input field, or any other HTML element with a random delay between each key.
-        
-        :param text: text to send
-        :return: None
-        """
-        await self.apply("(elem) => elem.focus()")
-        
-        # Send each character of the text with a random delay between keystrokes
-        for char in list(text):
-            await self._tab.send(cdp.input_.dispatch_key_event("char", text=char))
-            await tab.sleep(random.random())  # Random delay between each keystroke
-            
-    async def send_keys_humanistic(self, text: str, accuracy=0.9, correction_chance=0.9, typing_delay=(0.2, 0.7)):
-        """
-        Send text to an input field with humanistic typing behavior.
-
-        🚨 If you need your text sent perfectly increase your
-        `correction_chance` to `1.0`.
-
-        :param text: text to send
-        :param accuracy: typing accuracy (default 0.9)
-        :param correction_chance: chance to correct a typo (default 0.9)
-        :param typing_delay: tuple of (min, max) delay between keystrokes (default 0.1, 0.3)
-        """
-        await self.apply("(elem) => elem.focus()")
-
-        def get_delay():
-            # Increased delay for more human-like typing
-            return random.uniform(typing_delay[0], typing_delay[1])
-
-        def get_wrong_char(char):
-            nearby = self.get_nearby_chars(char)
-            return random.choice(nearby) if nearby else char
-
-        async def send_backspace():
-            await self._tab.send(cdp.input_.dispatch_key_event(
-                "keyDown",
-                windows_virtual_key_code=8,
-                code="Backspace",
-                key="Backspace"
-            ))
-            await self._tab.send(cdp.input_.dispatch_key_event(
-                "keyUp",
-                windows_virtual_key_code=8,
-                code="Backspace",
-                key="Backspace"
-            ))
-
-        true_text = ""
-        for char in text:
-            if random.random() > accuracy:
-                # Make a typo
-                wrong_char = get_wrong_char(char)
-                await self.send_keys(wrong_char)
-                true_text += char
-                await asyncio.sleep(get_delay())  # Added delay after typing a wrong character
-
-                if random.random() < correction_chance:
-                    # Correct the typo
-                    await send_backspace()
-                    await asyncio.sleep(get_delay())  # Added delay before correcting the typo
-                    await self.send_keys(char)
-                    true_text = ""
-            else:
-                # Type correctly
-                await self.send_keys(char)
-
-            await asyncio.sleep(get_delay())  # Delay between each keystroke
-
-        # Type any remaining correct text
-        if true_text:
-            for char in true_text:
-                await self.send_keys(char)
-                await asyncio.sleep(get_delay())
-
-                
     async def send_file(self, *file_paths: PathLike):
         """
         some form input require a file (upload), a full path needs to be provided.
@@ -978,9 +837,9 @@ class Element:
         :rtype: str
         """
 
-        import urllib.parse
-        import datetime
         import base64
+        import datetime
+        import urllib.parse
 
         pos = await self.get_position()
         if not pos:

@@ -5,20 +5,19 @@ import atexit
 import json
 import logging
 import os
-import pickle
 import pathlib
+import pickle
 import typing
 import urllib.parse
 import urllib.request
 import warnings
 from collections import defaultdict
-from typing import List, Union, Tuple
+from typing import List, Tuple, Union
 
 from .. import cdp
-from . import util
-from . import tab
+from . import tab, util
 from ._contradict import ContraDict
-from .config import PathLike, Config, is_posix
+from .config import Config, PathLike, is_posix
 from .connection import Connection
 
 logger = logging.getLogger(__name__)
@@ -344,7 +343,7 @@ class Browser:
             except (Exception,):
                 if _ == 4:
                     logger.debug("could not start", exc_info=True)
-                await self.sleep(1)
+                await self.sleep(0.5)
             else:
                 break
 
@@ -432,8 +431,9 @@ class Browser:
         await self.connection.send(cdp.browser.grant_permissions(permissions))
 
     async def tile_windows(self, windows=None, max_columns: int = 0):
-        import mss
         import math
+
+        import mss
 
         m = mss.mss()
         screen, screen_width, screen_height = 3 * (None,)
@@ -551,7 +551,7 @@ class Browser:
                 else:
                     del self._i
 
-    async def stop(self):
+    def stop(self):
         try:
             # asyncio.get_running_loop().create_task(self.connection.send(cdp.browser.close()))
 
@@ -604,8 +604,7 @@ class Browser:
                         raise
             self._process = None
             self._process_pid = None
-        await self._process.wait()
-        
+
     def __await__(self):
         # return ( asyncio.sleep(0)).__await__()
         return self.update_targets().__await__()
@@ -673,6 +672,7 @@ class CookieJar:
             break
         else:
             connection = self._browser.connection
+        cookies = await connection.send(cdp.storage.get_cookies())
         await connection.send(cdp.storage.set_cookies(cookies))
 
     async def save(self, file: PathLike = ".session.dat", pattern: str = ".*"):
@@ -709,6 +709,8 @@ class CookieJar:
         # if not connection:
         #     return
         # if not connection.websocket:
+        #     return
+        # if connection.websocket.closed:
         #     return
         cookies = await self.get_all(requests_cookie_format=False)
         included_cookies = []
@@ -748,6 +750,14 @@ class CookieJar:
         save_path = pathlib.Path(file).resolve()
         cookies = pickle.load(save_path.open("r+b"))
         included_cookies = []
+        connection = None
+        for tab in self._browser.tabs:
+            if tab.closed:
+                continue
+            connection = tab
+            break
+        else:
+            connection = self._browser.connection
         for cookie in cookies:
             for match in pattern.finditer(str(cookie.__dict__)):
                 included_cookies.append(cookie)
@@ -758,7 +768,7 @@ class CookieJar:
                     cookie.value,
                 )
                 break
-        self.set_all(included_cookies)
+        await connection.send(cdp.storage.set_cookies(included_cookies))
 
     async def clear(self):
         """
