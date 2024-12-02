@@ -486,10 +486,11 @@ class Connection(metaclass=CantTouchThis):
             self.enabled_domains.remove(ed)
 
     async def _prepare_headless(self):
-
         if getattr(self, "_prep_headless_done", None):
             return
-        response, error = await self._send_oneshot(
+
+        # Remove headless from userAgent and persist changes
+        _response = await self._send_oneshot(
             cdp.runtime.evaluate(
                 expression="navigator.userAgent",
                 user_gesture=True,
@@ -498,13 +499,64 @@ class Connection(metaclass=CantTouchThis):
                 allow_unsafe_eval_blocked_by_csp=True,
             )
         )
+        
+        if not _response: 
+            return
+        
+        response, error = _response
         if response and response.value:
             ua = response.value
+            ua = ua.replace("Headless", "").replace("headless", "")
+            
             await self._send_oneshot(
                 cdp.network.set_user_agent_override(
-                    user_agent=ua.replace("Headless", ""),
+                    user_agent=ua,
                 )
             )
+
+        # Persistent static script for all pages
+        persistent_script = """
+            // Override navigator.webdriver
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+
+            // Modify window.chrome
+            window.chrome = {
+                runtime: {}
+            };
+
+            // Override permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({state: Notification.permission}) :
+                    originalQuery(parameters)
+            );
+
+            // Static fingerprint properties
+            Object.defineProperty(navigator, 'hardwareConcurrency', {
+                get: () => 4
+            });
+            Object.defineProperty(navigator, 'deviceMemory', {
+                get: () => 8
+            });
+
+            Object.defineProperty(navigator, 'platform', {
+                get: () => 'Win32'
+            });
+            Object.defineProperty(navigator, 'language', {
+                get: () => 'en-US'
+            });
+        """
+
+        # Inject persistent script
+        await self._send_oneshot(
+            cdp.page.add_script_to_evaluate_on_new_document(
+                persistent_script
+            )
+        )
+
         setattr(self, "_prep_headless_done", True)
 
     async def _prepare_expert(self):
